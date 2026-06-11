@@ -183,8 +183,12 @@ class KalshiClient:
     # --------------------------------------------------------- markets
 
     def get_markets(self, limit=100, cursor=None, event_ticker=None,
-                    series_ticker=None, status=None) -> dict:
-        """GET /markets."""
+                    series_ticker=None, status=None, mve_filter=None) -> dict:
+        """GET /markets.
+
+        mve_filter: 'exclude' to omit multivariate (KXMVE) markets,
+        'only' to return only those.
+        """
         params = {"limit": limit}
         if cursor:
             params["cursor"] = cursor
@@ -194,6 +198,8 @@ class KalshiClient:
             params["series_ticker"] = series_ticker
         if status:
             params["status"] = status
+        if mve_filter:
+            params["mve_filter"] = mve_filter
         return self._request("GET", "/markets", params=params)
 
     def get_market(self, ticker: str) -> dict:
@@ -231,9 +237,17 @@ class KalshiClient:
         the best NO bid: yes_ask = 100 - best_no_bid.
         """
         data = self._request("GET", f"/markets/{ticker}/orderbook")
-        book = data.get("orderbook") or {}
-        yes_levels = book.get("yes") or []
-        no_levels = book.get("no") or []
+        log.info("Raw orderbook response (%s): %s", ticker, str(data)[:200])
+        # New format: orderbook_fp.yes_dollars / no_dollars with
+        # ["price_string", "count_string"] levels. Old: orderbook.yes / no.
+        book_fp = data.get("orderbook_fp")
+        if book_fp:
+            yes_levels = book_fp.get("yes_dollars") or []
+            no_levels = book_fp.get("no_dollars") or []
+        else:
+            book = data.get("orderbook") or {}
+            yes_levels = book.get("yes") or []
+            no_levels = book.get("no") or []
         yes_bid = max(
             (dollars_to_cents(lvl[0]) for lvl in yes_levels), default=None
         )
@@ -249,7 +263,7 @@ class KalshiClient:
         cursor = None
         logged_raw = False
         while len(markets) < max_markets:
-            data = self.get_markets(limit=200, cursor=cursor)
+            data = self.get_markets(limit=200, cursor=cursor, mve_filter="exclude")
             batch = data.get("markets", [])
             if not batch:
                 break
@@ -259,6 +273,7 @@ class KalshiClient:
                     "Raw yes_ask of first market fetched: %r (type=%s)",
                     raw, type(raw).__name__,
                 )
+                log.info("Sample tickers: %s", [m.get('ticker', '') for m in batch[:5]])
                 logged_raw = True
             for m in batch:
                 _normalize_market_prices(m)

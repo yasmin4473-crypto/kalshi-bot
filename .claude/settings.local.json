@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.kalshi.com)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import py_compile; py_compile.compile\\('kalshi_client.py', doraise=True\\); import app; print\\('OK'\\)\")"
+    ]
+  }
+}
