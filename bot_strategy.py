@@ -45,6 +45,9 @@ MAX_POSITIONS = 3
 DAILY_LOSS_LIMIT_CENTS = -1500
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 AI_MODEL = "openai/gpt-4o-mini"
+NEWSAPI_URL = "https://newsapi.org/v2/everything"
+NEWS_CACHE_SECONDS = 900  # reuse headlines across AI scans to stay under the free 100 req/day tier
+NEWS_QUERY = "sports betting prediction markets NBA MLB NFL"
 CATEGORIES = ["Sports", "Crypto", "Politics", "Economics"]
 
 
@@ -274,11 +277,45 @@ class MarketWorker:
         log.info("Order placed: %s %s %d @ %dc", self.ticker, action, count, yes_price)
 
 
-class AISelector:
-    """Queries OpenRouter/GPT-4o-mini for top market picks."""
+class NewsClient:
+    """Fetches recent headlines from NewsAPI, with caching to respect the
+    free tier limit (100 requests/day)."""
 
     def __init__(self, api_key: str):
         self.api_key = api_key
+        self._http = requests.Session()
+        self._cache: dict = {}  # query -> (fetched_at, headlines)
+
+    def get_news(self, query: str, max_articles: int = 3) -> list:
+        """Return a list of recent headline strings for the query."""
+        cached = self._cache.get(query)
+        if cached and time.time() - cached[0] < NEWS_CACHE_SECONDS:
+            return cached[1]
+        resp = self._http.get(
+            NEWSAPI_URL,
+            params={
+                "q": query,
+                "pageSize": max_articles,
+                "sortBy": "publishedAt",
+                "language": "en",
+                "apiKey": self.api_key,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        articles = resp.json().get("articles", [])
+        headlines = [a["title"] for a in articles if a.get("title")][:max_articles]
+        self._cache[query] = (time.time(), headlines)
+        log.info("NewsAPI: fetched %d headlines for %r", len(headlines), query)
+        return headlines
+
+
+class AISelector:
+    """Queries OpenRouter/GPT-4o-mini for top market picks."""
+
+    def __init__(self, api_key: str, news_client: "NewsClient | None" = None):
+        self.api_key = api_key
+        self.news_client = news_client
         self._http = requests.Session()
         self.recommendations: list = []
         self.last_update = None
@@ -307,6 +344,19 @@ class AISelector:
             "risk/reward ratio for buying YES contracts. "
             'Return JSON: {"picks": [{"ticker": "...", "reason": "...", "confidence": 0.0}]}'
         )
+
+        if self.news_client:
+            try:
+                headlines = self.news_client.get_news(NEWS_QUERY)
+            except Exception as e:
+                headlines = []
+                log.warning("News fetch failed (continuing without context): %s", e)
+            if headlines:
+                bullets = "\n".join(f"- {h}" for h in headlines)
+                system_prompt += (
+                    f"\n\nRecent news context:\n{bullets}\n\n"
+                    "Use this context to make better predictions."
+                )
 
         payload = {
             "model": AI_MODEL,
@@ -526,8 +576,15 @@ class MultiMarketBot:
         self.poll_seconds = POLL_SECONDS
 
         self.risk_manager = RiskManager()
+        newsapi_key = os.environ.get("NEWSAPI_KEY", "")
+        news_client = NewsClient(newsapi_key) if newsapi_key else None
+        if not news_client:
+            log.info("No NEWSAPI_KEY set; AI will run without news context")
         openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
-        self.ai_selector = AISelector(openrouter_key) if openrouter_key else None
+        self.ai_selector = (
+            AISelector(openrouter_key, news_client=news_client)
+            if openrouter_key else None
+        )
 
         self._workers: dict = {}
         self._workers_lock = threading.Lock()
