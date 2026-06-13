@@ -196,15 +196,19 @@ class MarketWorker:
 
     def _tick(self):
         market = self.client.get_market(self.ticker).get("market", {})
-        yes_bid = market.get("yes_bid")
-        yes_ask = market.get("yes_ask")
         status = market.get("status")
-        self.last_price = {"yes_bid": yes_bid, "yes_ask": yes_ask, "status": status}
         self.last_check = datetime.now(timezone.utc).isoformat()
 
         if status != "active":
             log.info("Market %s not active (status=%s); skipping", self.ticker, status)
+            self.last_price = {"yes_bid": None, "yes_ask": None, "status": status}
             return
+
+        ob = self.client.get_market_orderbook(self.ticker)
+        yes_bid = ob.get("yes_bid")
+        yes_ask = ob.get("yes_ask")
+        self.last_price = {"yes_bid": yes_bid, "yes_ask": yes_ask, "status": status}
+
         if yes_bid is None or yes_ask is None:
             log.info("No quotes for %s yet; skipping", self.ticker)
             return
