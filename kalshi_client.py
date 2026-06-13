@@ -69,15 +69,25 @@ class KalshiClient:
         if not self.key_id:
             raise ValueError("KALSHI_KEY_ID is not set")
 
-        key_path = private_key_path or os.environ.get("KALSHI_PRIVATE_KEY_PATH")
-        if not key_path or not os.path.isfile(key_path):
-            raise ValueError(
-                f"KALSHI_PRIVATE_KEY_PATH does not point to a file: {key_path!r}"
-            )
-        with open(key_path, "rb") as f:
+        key_content = os.environ.get("KALSHI_PRIVATE_KEY_CONTENT")
+        if key_content:
+            # Railway / cloud: key supplied as an env var string.
+            # Normalize escaped newlines that some platforms introduce.
+            pem_bytes = key_content.replace("\\n", "\n").encode("utf-8")
             self._private_key = serialization.load_pem_private_key(
-                f.read(), password=None
+                pem_bytes, password=None
             )
+        else:
+            key_path = private_key_path or os.environ.get("KALSHI_PRIVATE_KEY_PATH")
+            if not key_path or not os.path.isfile(key_path):
+                raise ValueError(
+                    "No private key found. Set KALSHI_PRIVATE_KEY_CONTENT (cloud) "
+                    f"or KALSHI_PRIVATE_KEY_PATH (local). Got path: {key_path!r}"
+                )
+            with open(key_path, "rb") as f:
+                self._private_key = serialization.load_pem_private_key(
+                    f.read(), password=None
+                )
 
         self.base_url = (
             base_url or os.environ.get("KALSHI_BASE_URL", DEFAULT_BASE_URL)
