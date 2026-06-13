@@ -265,7 +265,13 @@ class KalshiClient:
             (dollars_to_cents(lvl[0]) for lvl in no_levels), default=None
         )
         yes_ask = 100 - best_no_bid if best_no_bid is not None else None
-        return {"yes_bid": yes_bid, "yes_ask": yes_ask}
+        ob = {"yes_bid": yes_bid, "yes_ask": yes_ask}
+        if ob.get("yes_bid") or ob.get("yes_ask"):
+            log.info(
+                "Market with prices found: %s bid=%s ask=%s",
+                ticker, ob.get("yes_bid"), ob.get("yes_ask"),
+            )
+        return ob
 
     def get_all_active_markets(self, categories=None, max_markets=500) -> list:
         """Paginate through all active markets, optionally filtered by category list."""
