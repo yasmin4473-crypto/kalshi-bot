@@ -140,6 +140,7 @@ class MarketWorker:
         self.trade_log: list = []
         self.current_pnl_cents = 0
         self._entry_price = None
+        self.position = 0  # contracts currently held; 0 means no open position
 
     def start(self):
         if self.running:
@@ -225,6 +226,9 @@ class MarketWorker:
             return
 
         if held == 0 and 0 < yes_ask < self.buy_threshold:
+            if self.position > 0:
+                log.info("%s: skipping buy — position already open (%d contracts)", self.ticker, self.position)
+                return
             ok, reason = self.risk_manager.can_open(self.ticker)
             if ok:
                 log.info(
@@ -262,11 +266,13 @@ class MarketWorker:
         pnl_this_trade = None
         if action == "buy":
             self._entry_price = yes_price
+            self.position = count
             self.risk_manager.record_buy(self.ticker, count, yes_price)
         else:
             pnl_this_trade = self.risk_manager.record_sell(self.ticker, count, yes_price)
             self.current_pnl_cents += pnl_this_trade
             self._entry_price = None
+            self.position = 0
 
         entry = {
             "time": datetime.now(timezone.utc).isoformat(),
